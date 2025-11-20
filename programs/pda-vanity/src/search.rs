@@ -1,17 +1,38 @@
 use anchor_lang::prelude::Pubkey;
+use clap::Parser;
 use sha2::{Sha256, Digest};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// The suffix to search for (e.g., "pump")
+    #[arg(short, long, default_value = "pump")]
+    suffix: String,
+
+    /// Number of threads to use (defaults to available cores)
+    #[arg(short, long)]
+    threads: Option<usize>,
+
+    /// Program ID to derive PDA for
+    #[arg(short, long, default_value = "7d4pygUVej17wWKY6uiPdFSVPTDKEEAzR4YMmkc1Bss1")]
+    program_id: String,
+}
+
 fn main() {
-    let program_id = Pubkey::from_str("7d4pygUVej17wWKY6uiPdFSVPTDKEEAzR4YMmkc1Bss1").unwrap();
-    let suffix = "pump";
+    let args = Args::parse();
+    
+    let program_id = Pubkey::from_str(&args.program_id).expect("Invalid Program ID");
+    let suffix = args.suffix;
     let found = Arc::new(AtomicBool::new(false));
     
-    // Use all available cores
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+    // Use user-specified threads or all available cores
+    let threads = args.threads.unwrap_or_else(|| {
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8)
+    });
     
     println!("Searching for seed for suffix '{}' with {} threads...", suffix, threads);
     let start = std::time::Instant::now();

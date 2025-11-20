@@ -43,10 +43,18 @@ Use the included Rust binary to search for a seed that generates a PDA with your
 
 ```bash
 cd programs/pda-vanity
-cargo run --release --bin search
+cargo run --release --bin search -- --suffix "pump"
 ```
 
-*Note: You can modify the target suffix in `programs/pda-vanity/src/search.rs`.*
+**Options:**
+-   `-s, --suffix <SUFFIX>`: The suffix to search for (default: "pump").
+-   `-t, --threads <THREADS>`: Number of threads to use (default: all cores).
+-   `-p, --program-id <ID>`: Target Program ID.
+
+*Example:*
+```bash
+cargo run --release --bin search -- --suffix "moon" --threads 16
+```
 
 Output example:
 ```text
@@ -54,7 +62,7 @@ Searching for seed for suffix 'pump' with 14 threads...
 Found seed: 5270498306774619999
 PDA: HZTPCxeTBLEr5FfUkjzLixXduWCzhgzjhvoNrKVspump
 Bump: 255
-Time: 2.20s
+Time: 197.830958ms
 ```
 
 ### 2. Create the Token
