@@ -1,4 +1,6 @@
 {
+  "name": "pda-vanity",
+  "version": "0.1.1",
   "license": "MIT",
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
