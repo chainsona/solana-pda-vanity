@@ -1,4 +1,5 @@
 use anchor_lang::prelude::Pubkey;
+use sha2::{Sha256, Digest};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -15,16 +16,29 @@ fn main() {
     println!("Searching for seed for suffix '{}' with {} threads...", suffix, threads);
     let start = std::time::Instant::now();
 
+    // Pre-compute target indices for the suffix
+    // We match from the end of the string, so we reverse the suffix.
+    // "pump" -> check last char 'p', then 'm', then 'u', then 'p'.
+    let alphabet = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut target_indices = Vec::new();
+    for &char_byte in suffix.as_bytes().iter().rev() {
+        let idx = alphabet.iter().position(|&x| x == char_byte)
+            .expect("Invalid character in suffix") as u8;
+        target_indices.push(idx);
+    }
+    let target_indices = Arc::new(target_indices); // Share across threads
+
     let mut handles = vec![];
 
     // Stride for each thread to avoid overlap
     // We divide the u64 space among threads.
     let stride = u64::MAX / (threads as u64);
+    let pda_marker = b"ProgramDerivedAddress";
 
     for i in 0..threads {
         let found = found.clone();
         let program_id = program_id;
-        let suffix = suffix.to_string();
+        let target_indices = target_indices.clone();
         let mut seed = stride * (i as u64);
         let end_seed = if i == threads - 1 { u64::MAX } else { seed + stride };
 
@@ -43,18 +57,45 @@ fn main() {
                 }
 
                 let seed_bytes = seed.to_le_bytes();
-                let seeds_with_bump = &[&seed_bytes[..], bump_slice];
                 
-                // create_program_address checks if the result is a valid PDA (off-curve)
-                // This is the most expensive part (hashing + curve check)
-                if let Ok(pda) = Pubkey::create_program_address(seeds_with_bump, &program_id) {
-                    // Only encode to string if we have a valid PDA
-                    let pda_str = pda.to_string();
-                    if pda_str.ends_with(&suffix) {
+                // OPTIMIZATION v2: Hash first, check suffix, THEN check curve.
+                // This avoids the expensive elliptic curve check for 99.99% of seeds.
+                let mut hasher = Sha256::new();
+                hasher.update(&seed_bytes);
+                hasher.update(bump_slice);
+                hasher.update(program_id.as_ref());
+                hasher.update(pda_marker);
+                let hash = hasher.finalize(); // GenericArray<u8, 32>
+                
+                // Copy for suffix check
+                let mut bytes: [u8; 32] = hash.into();
+                let original_bytes = bytes;
+                
+                let mut is_match = true;
+                
+                for &target in target_indices.iter() {
+                    let mut remainder = 0u64;
+                    // Perform division in-place on the byte array (treating it as big-endian number base 256)
+                    for j in 0..32 {
+                        let val = (remainder << 8) | (bytes[j] as u64);
+                        bytes[j] = (val / 58) as u8;
+                        remainder = val % 58;
+                    }
+                    
+                    if remainder as u8 != target {
+                        is_match = false;
+                        break;
+                    }
+                }
+
+                if is_match {
+                    // Suffix matches! Now verify it's a valid PDA (must be OFF curve).
+                    let pda = Pubkey::new_from_array(original_bytes);
+                    if !pda.is_on_curve() {
                         // Found it!
                         if !found.swap(true, Ordering::SeqCst) {
                             println!("Found seed: {}", seed);
-                            println!("PDA: {}", pda_str);
+                            println!("PDA: {}", pda.to_string()); 
                             println!("Bump: {}", bump);
                             println!("Time: {:?}", start.elapsed());
                         }
@@ -66,7 +107,7 @@ fn main() {
                 local_count += 1;
                 
                 // Print progress from first thread only to avoid clutter
-                if i == 0 && local_count % 1_000_000 == 0 {
+                if i == 0 && local_count % 5_000_000 == 0 {
                      println!("Thread 0 checked {} seeds... (Time: {:?})", local_count, start.elapsed());
                 }
             }
